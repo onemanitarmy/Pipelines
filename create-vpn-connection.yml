@@ -1,0 +1,116 @@
+# Creating VPN connections to manufacturer.
+# NOTE: The DPD timer is default 45 seconds and cannot be changed as code as this needs to be implemented;
+# https://github.com/Azure/azure-cli/issues/28051
+
+parameters:
+- name: vpnconnection
+  displayName: Create IPSec site-to-site connection
+  type: string
+  default: vpn-manufacturer-01
+  values:
+  - vpn-manufacturer-01
+  - vpn-manufacturer-02
+
+
+variables:
+  ${{ if eq(parameters.vpnconnection, 'vpn-manufacturer-01') }}:
+  
+    # Default Variables
+    ServiceConnectionName: ""                 
+    SubscriptionName: ""   
+    ResourceGroupName: "ccf-customer-connectivity-westeurope"
+    Location: "westeurope"     
+
+    # Create VPN Connection Name
+    VPNConnectionName: "ccf-customer-manufacturer-con01"
+
+    # Existing VPN Variables.
+    VNetGatewayName: "ccf-customer-vpngw-westeurope"
+    LocalNetworkGatewayName: "ccf-customer-lgw-manufacturer-01"
+
+    # KeyVault variables to retrieve PSK Key.
+    KeyVaultName: "ccf-customer-kv-westeurope"  # Replace with your Key Vault name
+    SecretName: "PSK-S2S-VPN-manufacturer"  # Replace with your secret name  
+
+  ${{ if eq(parameters.vpnconnection, 'vpn-manufacturer-02') }}:
+
+    # Default Variables
+    ServiceConnectionName: ""                 
+    SubscriptionName: ""   
+    ResourceGroupName: "ccf-customer-connectivity-westeurope"
+    Location: "westeurope"     
+
+    # Create VPN Connection Name
+    VPNConnectionName: "ccf-customer-manufacturer-con02"
+
+    # Existing VPN Variables.
+    VNetGatewayName: "ccf-customer-vpngw-westeurope"
+    LocalNetworkGatewayName: "ccf-customer-lgw-manufacturer-02"
+
+    # KeyVault variables to retrieve PSK Key.
+    KeyVaultName: "ccf-customer-kv-westeurope"  # Replace with your Key Vault name
+    SecretName: "PSK-S2S-VPN-manufacturer2"  # Replace with your secret name  
+                                                                                                 
+
+trigger:
+  - none
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: Deploy_VPN_Connection
+    jobs:
+    - job: Create_IPSec_VPN_Connection
+      continueOnError: false
+      steps:
+        - task: AzureCLI@2
+          displayName: 'Create_IPSec_VPN_Connection'
+          inputs:
+            azureSubscription: '$(ServiceConnectionName)' # Use Service Connection to deploy the code to Azure.
+            ScriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+
+              # Select Subscription to use
+              az account set --subscription '$(SubscriptionName)'
+
+              # Retrieve the shared key from Key Vault
+              GetSecret=$(az keyvault secret show \
+                --name '$(SecretName)' \
+                --vault-name '$(KeyVaultName)' \
+                --query value -o tsv)
+
+              # Deploy IPsec VPN Site-to-Site in Azure
+              az network vpn-connection create \
+                --name '$(VPNConnectionName)' \
+                --resource-group '$(ResourceGroupName)' \
+                --location '$(Location)' \
+                --vnet-gateway1 '$(VNetGatewayName)' \
+                --shared-key $GetSecret \
+                --local-gateway2 '$(LocalNetworkGatewayName)'
+
+        - task: AzureCLI@2
+          displayName: 'Create_IPSec_Policy'
+          inputs:
+            azureSubscription: '$(ServiceConnectionName)' # Use Service Connection to deploy the code to Azure.
+            ScriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+
+              # Select Subscription to use
+              az account set --subscription '$(SubscriptionName)'
+
+              # Deploy IPsec Policy VPN Site-to-Site in Azure
+              az network vpn-connection ipsec-policy add \
+                --connection-name '$(VPNConnectionName)' \
+                --resource-group '$(ResourceGroupName)' \
+                --ike-encryption 'AES256' \
+                --ike-integrity 'SHA256' \
+                --dh-group 'DHGroup14' \
+                --ipsec-encryption 'AES256' \
+                --ipsec-integrity 'SHA256' \
+                --pfs-group 'None' \
+                --sa-lifetime '3600' \
+                --sa-max-size '0'
+
